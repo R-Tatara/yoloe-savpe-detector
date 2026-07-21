@@ -104,9 +104,9 @@ def report_results(results: list) -> None:
     # Print detection details including tracking ID
     print(f"Detections: {len(results[0].boxes)}")
     for box in results[0].boxes:
-        track_id = box.id.item() if box.id is not None else None
+        track_id = int(box.id.item()) if box.id is not None else None
         xyxy = [round(v, 2) for v in box.xyxy.tolist()[0]]
-        print(f"id={track_id}, conf={box.conf.item():.3f}, xyxy={xyxy}")
+        print(f"id={track_id}, conf={box.conf.item():.2f}, xyxy={xyxy}")
 
 
 def main() -> None:
