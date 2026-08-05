@@ -10,12 +10,14 @@ WIDTH = 640
 HEIGHT = 480
 FPS = 30
 
-MODEL_NAME = Path("yoloe-11s-seg.pt")
+MODEL_NAME = Path("yoloe-11l-seg.pt")
 CONF_THRESHOLD = 0.05  # lower than default since this is a cross-image prompt
 IMGSZ = 1280  # higher than the 640 default so individual objects stay separable
 IOU_THRESHOLD = 0.5
 DEVICE = 0  # 0 for GPU (CUDA device 0), 'cpu' for CPU
 TRACKER_CONFIG = "botsort.yaml"  # Ultralytics built-in tracker config (ByteTrack-based with appearance matching)
+ROTATED_BOX_COLOR = (0, 255, 255)  # BGR yellow, distinct from the axis-aligned box colors
+ROTATED_BOX_THICKNESS = 2
 
 
 def setup_realsense() -> rs.pipeline:
@@ -93,11 +95,40 @@ def run_detection_loop(model: YOLOE, pipeline: rs.pipeline) -> None:
             imgsz=IMGSZ,
             verbose=False,
         )
+        
         report_results(results)
-        cv2.imshow(window_name, results[0].plot())
+        plotted = results[0].plot()
+        rotated_boxes = extract_rotated_boxes(results)
+        plotted = draw_rotated_boxes(plotted, rotated_boxes)
+        cv2.imshow(window_name, plotted)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
+
+
+def extract_rotated_boxes(results: list) -> list[np.ndarray]:
+    # Compute a rotated bounding box (4 corner points) per mask via minAreaRect
+    if results[0].masks is None:
+        return []
+    rotated_boxes = []
+    for contour in results[0].masks.xy:
+        rect = cv2.minAreaRect(contour.astype(np.float32))
+        box_points = cv2.boxPoints(rect).astype(int)
+        rotated_boxes.append(box_points)
+    return rotated_boxes
+
+
+def draw_rotated_boxes(image: np.ndarray, rotated_boxes: list[np.ndarray]) -> np.ndarray:
+    # Draw rotated bounding box outlines onto the given image
+    for box_points in rotated_boxes:
+        cv2.polylines(
+            image,
+            [box_points],
+            isClosed=True,
+            color=ROTATED_BOX_COLOR,
+            thickness=ROTATED_BOX_THICKNESS,
+        )
+    return image
 
 
 def report_results(results: list) -> None:
