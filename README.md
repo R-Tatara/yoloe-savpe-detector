@@ -3,15 +3,16 @@
 
 # yoloe-savpe-detector
 
-Realtime object detection using [YOLOE](https://github.com/THU-MIG/yoloe) visual prompt embeddings on an Intel RealSense camera stream. Select any object in a single frame with your mouse, and the model tracks all matching objects in the live feed using SAVPE (Semantic-Activated Visual Prompt Embedding).
+Realtime object detection using [YOLOE](https://github.com/THU-MIG/yoloe) visual prompt embeddings on an Intel RealSense camera stream. Click an object in a single frame, let SAM2 segment it, and the model tracks all matching objects in the live feed using SAVPE (Semantic-Activated Visual Prompt Embedding). Each detection also gets a rotated bounding box (xywhr) computed from the largest cluster of its instance mask.
 
 ## Prerequisites
 
 - Python 3.12 or later
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
 - Intel RealSense camera (via `pyrealsense2`)
-- CUDA-capable GPU (PyTorch is installed from the `cu130` index)
-- YOLOE segmentation weights (`yoloe-11s-seg.pt`) in the project root
+- CUDA-capable GPU (PyTorch is installed from the `cu130` index; both YOLOE and SAM2 run on CUDA device 0 by default)
+- YOLOE segmentation weights (`yoloe-26x-seg.pt`) in the project root; change `MODEL_NAME` in `savpe.py` to use another variant (e.g. `yoloe-11l-seg.pt`)
+- SAM2 weights (`sam2.1_b.pt`); Ultralytics downloads them into the project root on first run, so place the file there manually when running offline
 
 ## Installation
 
@@ -21,17 +22,24 @@ cd yoloe-savpe-detector
 uv sync
 ```
 
+## Project Structure
+
+- `main.py` — RealSense camera setup and overall control flow
+- `segmentation.py` — SAM2 click-to-mask selection and mask confirmation UI
+- `savpe_prompt.py` — converts the SAM2 mask into the YOLOE visual prompt (enclosing bbox + class)
+- `prompt_save.py` — saves the visual prompt (reference image, mask, `prompt.json`) to `prompt/`
+- `prompt_load.py` — loads and validates the saved visual prompt
+- `savpe.py` — YOLOE SAVPE initialization and the detection/tracking loop
+- `clustering.py` — mask denoising, largest-cluster extraction and rotated bbox (xywhr) computation
+
 ## Usage
 
 ```bash
 uv run python main.py
 ```
 
-- A window opens showing the first camera frame — drag a box around the object you want to track, then press Enter
-- The live detection window then displays all matches with tracking IDs (BoT-SORT)
-- Press `q` to quit
 
-## LISENCE
+## License
 
 AGPL-3.0
 

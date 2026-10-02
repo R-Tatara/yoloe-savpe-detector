@@ -1,34 +1,36 @@
-===== Python =====
+# ===== Python =====
 __pycache__/
 *.py[cod]
 
-===== Virtual Environment =====
+# ===== Virtual Environment =====
 .venv/
 .env
 
-===== Build / Packaging =====
+# ===== Build / Packaging =====
 build/
 dist/
 *.egg-info/
 
-===== Test / Coverage =====
+# ===== Test / Coverage =====
 .ruff_cache
 .pytest_cache/
 .coverage
 htmlcov/
 
-===== OS =====
+# ===== OS =====
 .DS_Store
 Thumbs.db
 
-===== IDE / Editor =====
+# ===== IDE / Editor =====
 .vscode/
 .idea/
+.github/
 .claude/
 AGENTS.md
 
-===== Logs =====
+# ===== Logs =====
 *.log
 
-===== Others =====
+# ===== Others =====
 *.pt
+prompt/

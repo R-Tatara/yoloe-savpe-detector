@@ -1,23 +1,21 @@
-from pathlib import Path
-
 import cv2
 import numpy as np
 import pyrealsense2 as rs
-from ultralytics import YOLOE
-from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
+
+from prompt_load import load_visual_prompt
+from prompt_save import save_visual_prompt
+from savpe import (
+    clear_class_names,
+    initialize_vpe_classes,
+    load_yoloe_model,
+    run_detection_loop,
+)
+from savpe_prompt import build_visual_prompts
+from segmentation import load_sam_model, select_reference_mask
 
 WIDTH = 640
 HEIGHT = 480
 FPS = 30
-
-MODEL_NAME = Path("yoloe-11l-seg.pt")
-CONF_THRESHOLD = 0.05  # lower than default since this is a cross-image prompt
-IMGSZ = 1280  # higher than the 640 default so individual objects stay separable
-IOU_THRESHOLD = 0.5
-DEVICE = 0  # 0 for GPU (CUDA device 0), 'cpu' for CPU
-TRACKER_CONFIG = "botsort.yaml"  # Ultralytics built-in tracker config (ByteTrack-based with appearance matching)
-ROTATED_BOX_COLOR = (0, 255, 255)  # BGR yellow, distinct from the axis-aligned box colors
-ROTATED_BOX_THICKNESS = 2
 
 
 def setup_realsense() -> rs.pipeline:
@@ -38,131 +36,61 @@ def get_frame(pipeline: rs.pipeline) -> np.ndarray | None:
     return np.asanyarray(color_frame.get_data())
 
 
-def select_reference_bbox(frame: np.ndarray) -> tuple[int, int, int, int]:
-    # Let the user drag a box around one in-scene object (Enter to confirm, Esc to cancel)
-    x, y, w, h = cv2.selectROI(
-        "Select object and press Enter", frame, showCrosshair=False
-    )
-    cv2.destroyAllWindows()
-    return x, y, w, h
+def create_visual_prompt(
+    pipeline: rs.pipeline,
+) -> bool:
+    """Let the user pick the object with SAM2 and save the prompt to disk."""
+    frame = get_frame(pipeline)
+    if frame is None:
+        print("Error: could not capture the initial color frame.")
+        return False
+
+    # Load SAM2 and let the user click the object to segment
+    sam_model = load_sam_model()
+    mask = select_reference_mask(sam_model, frame)
+    if mask is None:
+        print("Canceled: no object was selected.")
+        return False
+
+    save_visual_prompt(frame, build_visual_prompts(mask), mask)
+    return True
 
 
-def build_visual_prompts(bbox: tuple[int, int, int, int]) -> dict[str, np.ndarray]:
-    # Convert a single xywh bbox into the bboxes/cls arrays YOLOE expects
-    x, y, w, h = bbox
-    return dict(
-        bboxes=np.array([[x, y, x + w, y + h]], dtype=np.float32),
-        cls=np.array([0]),
-    )
-
-
-def initialize_vpe_classes(
-    model: YOLOE,
-    frame: np.ndarray,
-    visual_prompts: dict[str, np.ndarray],
-) -> list:
-    # Make the visual prompt embedding into the model's classes
-    return model.predict(
-        frame,
-        refer_image=frame,
-        visual_prompts=visual_prompts,
-        predictor=YOLOEVPSegPredictor,
-        device=DEVICE,
-        quantize=16,
-        conf=CONF_THRESHOLD,
-        iou=IOU_THRESHOLD,
-        imgsz=IMGSZ,
-        verbose=False,
-    )
-
-
-def run_detection_loop(model: YOLOE, pipeline: rs.pipeline) -> None:
-    # Keep pulling RealSense frames and running the VPE-baked model
-    window_name = "YOLOE Realtime Detection (press q to quit)"
-    while True:
-        frame = get_frame(pipeline)
-        if frame is None:
-            continue
-
-        results = model.track(
-            frame,
-            persist=True,
-            tracker=TRACKER_CONFIG,
-            device=DEVICE,
-            quantize=16,
-            conf=CONF_THRESHOLD,
-            iou=IOU_THRESHOLD,
-            imgsz=IMGSZ,
-            verbose=False,
-        )
-        
-        report_results(results)
-        plotted = results[0].plot()
-        rotated_boxes = extract_rotated_boxes(results)
-        plotted = draw_rotated_boxes(plotted, rotated_boxes)
-        cv2.imshow(window_name, plotted)
-
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-
-
-def extract_rotated_boxes(results: list) -> list[np.ndarray]:
-    # Compute a rotated bounding box (4 corner points) per mask via minAreaRect
-    if results[0].masks is None:
-        return []
-    rotated_boxes = []
-    for contour in results[0].masks.xy:
-        rect = cv2.minAreaRect(contour.astype(np.float32))
-        box_points = cv2.boxPoints(rect).astype(int)
-        rotated_boxes.append(box_points)
-    return rotated_boxes
-
-
-def draw_rotated_boxes(image: np.ndarray, rotated_boxes: list[np.ndarray]) -> np.ndarray:
-    # Draw rotated bounding box outlines onto the given image
-    for box_points in rotated_boxes:
-        cv2.polylines(
-            image,
-            [box_points],
-            isClosed=True,
-            color=ROTATED_BOX_COLOR,
-            thickness=ROTATED_BOX_THICKNESS,
-        )
-    return image
-
-
-def report_results(results: list) -> None:
-    # Print detection details including tracking ID
-    print(f"Detections: {len(results[0].boxes)}")
-    for box in results[0].boxes:
-        track_id = int(box.id.item()) if box.id is not None else None
-        xyxy = [round(v, 2) for v in box.xyxy.tolist()[0]]
-        print(f"id={track_id}, conf={box.conf.item():.2f}, xyxy={xyxy}")
-
-
-def main() -> None:
-    # Set up the RealSense camera
-    try:
-        pipeline = setup_realsense()
-    except Exception as e:
-        print(f"Error: RealSense not found. {e}")
-        return
+def capture_and_save_visual_prompt() -> bool:
+    """Capture a frame, let the user pick the object, and save the visual prompt."""
+    pipeline = setup_realsense()
 
     try:
-        # Capture single RealSense frame and let the user select the object
-        frame = get_frame(pipeline)
-        bbox = select_reference_bbox(frame)
-        visual_prompts = build_visual_prompts(bbox)
-
-        # Initialize the YOLOE model and prepare the visual prompt
-        model = YOLOE(str(MODEL_NAME))
-        results = initialize_vpe_classes(model, frame, visual_prompts)
-        model.predictor.model.names = {i: "" for i in model.names}  # Clear class names for simple appearance
-
-        run_detection_loop(model, pipeline)
+        return create_visual_prompt(pipeline)
     finally:
         pipeline.stop()
         cv2.destroyAllWindows()
+
+
+def detect_with_saved_visual_prompt() -> None:
+    """Load the saved visual prompt into YOLOE and run real-time detection."""
+    pipeline = setup_realsense()
+
+    try:
+        # Load YOLOE and the saved prompt, then bake the prompt into the model's classes
+        model = load_yoloe_model()
+        refer_image, visual_prompts = load_visual_prompt()
+        initialize_vpe_classes(model, refer_image, visual_prompts)
+
+        clear_class_names(model)
+
+        run_detection_loop(model, pipeline, get_frame)
+    finally:
+        pipeline.stop()
+        cv2.destroyAllWindows()
+
+
+def main() -> None:
+    """Create and save a visual prompt, then run detection with it."""
+    if not capture_and_save_visual_prompt():
+        return
+
+    detect_with_saved_visual_prompt()
 
 
 if __name__ == "__main__":
