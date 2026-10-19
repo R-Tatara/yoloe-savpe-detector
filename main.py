@@ -16,6 +16,8 @@ from segmentation import load_sam_model, select_reference_mask
 WIDTH = 640
 HEIGHT = 480
 FPS = 30
+# Initial frames are dark until auto-exposure settles
+WARMUP_FRAME_COUNT = 20
 
 
 def setup_realsense() -> rs.pipeline:
@@ -61,6 +63,8 @@ def capture_and_save_visual_prompt() -> bool:
     pipeline = setup_realsense()
 
     try:
+        for _ in range(WARMUP_FRAME_COUNT):
+            pipeline.wait_for_frames()
         return create_visual_prompt(pipeline)
     finally:
         pipeline.stop()
